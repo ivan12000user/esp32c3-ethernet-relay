@@ -9,6 +9,13 @@
 - Field-tested Ethernet, STA, Web, FC01, FC05 relay actuation, MQTT commands/states
 - Repository copy externalizes Web/AP passwords into untracked `secrets.h` (small intentional build configuration change)
 
-## v1.4.0 (planned, not released)
+## v1.4.0 (candidate, hardware testing in progress; not released)
 
-- Four independent per-channel ping watchdogs with safety lockouts, logs and configuration page
+- Four independent per-channel ping watchdogs with NVS settings, Web UI, MQTT events, Modbus diagnostics and lockouts.
+- Actual ESP32-C3 bench testing verified `HEALTHY` on a live IP, one physical OFF/ON relay cycle on a nonresponsive test IP and `LOCKOUT` with a stable ON output.
+- Fix after hardware tests: Web **Save** preserves an existing LOCKOUT, does not interrupt a watchdog power-off pulse, and does not reset the hourly rate-limit history.
+- Disarm/rearm cannot bypass the hourly limit; only the explicit **Reset LOCKOUT** action clears its history.
+- Web status and `/api/state` now expose `cycles_hour` separately from total `cycles`.
+- Form inputs use `box-sizing: border-box` to stay within their borders.
+
+**Pending:** regression check on ESP32-C3 hardware; multi-channel behavior, outage detection with live LAN link, and safe startup remain to be qualified. Do not use to power-cycle critical loads.
