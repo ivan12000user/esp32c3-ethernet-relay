@@ -138,6 +138,170 @@ void setRelay(int ch, bool on) {
   }
 }
 
+
+bool commandRelay(int ch, bool on) {
+  if (ch < 0 || ch > 3 || wd[ch].active()) return false;
+  if (wd[ch].config.mode == WD_PULSE && on) {
+    wd[ch].startPulse(millis());
+    setRelay(ch, true);
+    return true;
+  }
+  if (wd[ch].config.mode == WD_PULSE) wd[ch].cancelPulse();
+  setRelay(ch, on);
+  return true;
+}
+
+void watchdogEvent(int ch, const char* event) {
+  Serial.printf("Watchdog ch%d: %s, state=%s, target=%s\n",
+    ch+1, event, wdStateName(wd[ch].state), wdTarget[ch].c_str());
+  if (mqtt.connected()) {
+    String topic = mqttBase + "/relay" + String(ch+1) + "/watchdog/event";
+    mqtt.publish(topic.c_str(), event, false);
+  }
+}
+
+void applyWdAction(int ch, WdAction action) {
+  if (action == WD_SET_ON) {
+    setRelay(ch, true);
+    watchdogEvent(ch, "power_on");
+  } else if (action == WD_SET_OFF) {
+    setRelay(ch, false);
+    watchdogEvent(ch, "power_cycle");
+  }
+}
+
+void loadWatchdogSettings() {
+  prefs.begin("relay-wd", true);
+  for (int i = 0; i < 4; ++i) {
+    String k = String(i);
+    WdConfig c;
+    c.mode = prefs.getUChar(("m"+k).c_str(), 0);
+    if (c.mode > WD_PING) c.mode = WD_MANUAL;
+    c.armed = prefs.getBool(("arm"+k).c_str(), false);
+    c.intervalSec = constrain((int)prefs.getUShort(("int"+k).c_str(), 10), 5, 3600);
+    c.failLimit = constrain((int)prefs.getUChar(("fail"+k).c_str(), 3), 1, 20);
+    c.offSec = constrain((int)prefs.getUShort(("off"+k).c_str(), 10), 1, 300);
+    c.graceSec = constrain((int)prefs.getUShort(("gr"+k).c_str(), 120), 10, 1800);
+    c.maxCycles = constrain((int)prefs.getUChar(("cap"+k).c_str(), 3), 1, 10);
+    c.pulseMs = constrain(prefs.getUInt(("pulse"+k).c_str(), 500), (uint32_t)100, (uint32_t)60000);
+    wdTarget[i] = prefs.getString(("ip"+k).c_str(), "");
+    wdName[i] = prefs.getString(("name"+k).c_str(), "Relay "+String(i+1));
+    if (wdName[i].isEmpty()) wdName[i] = "Relay "+String(i+1);
+    IPAddress addr;
+    if (!addr.fromString(wdTarget[i]) || addr[0] == 0 || addr[0] >= 224)
+      c.armed = false;
+    if (c.mode != WD_PING) c.armed = false;
+    applyWdAction(i, wd[i].configure(c, millis()));
+  }
+  prefs.end();
+}
+
+void saveWatchdogSettings() {
+  prefs.begin("relay-wd", false);
+  for (int i = 0; i < 4; ++i) {
+    String k = String(i);
+    const WdConfig &c = wd[i].config;
+    prefs.putUChar(("m"+k).c_str(), c.mode);
+    prefs.putBool(("arm"+k).c_str(), c.armed);
+    prefs.putUShort(("int"+k).c_str(), c.intervalSec);
+    prefs.putUChar(("fail"+k).c_str(), c.failLimit);
+    prefs.putUShort(("off"+k).c_str(), c.offSec);
+    prefs.putUShort(("gr"+k).c_str(), c.graceSec);
+    prefs.putUChar(("cap"+k).c_str(), c.maxCycles);
+    prefs.putUInt(("pulse"+k).c_str(), c.pulseMs);
+    prefs.putString(("ip"+k).c_str(), wdTarget[i]);
+    prefs.putString(("name"+k).c_str(), wdName[i]);
+  }
+  prefs.end();
+}
+
+static void pingSuccess(esp_ping_handle_t, void*) {
+  if (pingQueue) { PingEvent e{1}; xQueueSend(pingQueue, &e, 0); }
+}
+static void pingTimeout(esp_ping_handle_t, void*) {
+  if (pingQueue) { PingEvent e{2}; xQueueSend(pingQueue, &e, 0); }
+}
+static void pingEnd(esp_ping_handle_t, void*) {
+  if (pingQueue) { PingEvent e{3}; xQueueSend(pingQueue, &e, 0); }
+}
+
+bool beginPing(int ch) {
+  if (pingHandle || activePingChannel >= 0 || !pingQueue) return false;
+  IPAddress ip;
+  if (!ip.fromString(wdTarget[ch])) return false;
+  ip_addr_t destination;
+  IP_ADDR4(&destination, ip[0], ip[1], ip[2], ip[3]);
+  esp_ping_config_t cfg = ESP_PING_DEFAULT_CONFIG();
+  cfg.target_addr = destination;
+  cfg.count = 1;
+  cfg.interval_ms = 1000;
+  cfg.timeout_ms = 1000;
+  cfg.data_size = 16;
+  esp_ping_callbacks_t cbs = {};
+  cbs.on_ping_success = pingSuccess;
+  cbs.on_ping_timeout = pingTimeout;
+  cbs.on_ping_end = pingEnd;
+  if (esp_ping_new_session(&cfg, &cbs, &pingHandle) != ESP_OK) return false;
+  activePingChannel = ch;
+  pingStartedAt = millis();
+  pingStopRequested = false;
+  pingOutcome = 0;
+  if (esp_ping_start(pingHandle) != ESP_OK) {
+    esp_ping_delete_session(pingHandle);
+    pingHandle = nullptr;
+    activePingChannel = -1;
+    return false;
+  }
+  return true;
+}
+
+void serviceWatchdogs() {
+  uint32_t now = millis();
+  PingEvent evt;
+  if (pingQueue) while (xQueueReceive(pingQueue, &evt, 0) == pdTRUE) {
+    if (evt.type == 1) pingOutcome = 1;
+    if (evt.type == 2) pingOutcome = 2;
+    if (evt.type == 3 && pingHandle) {
+      int ch = activePingChannel;
+      esp_ping_delete_session(pingHandle);
+      pingHandle = nullptr;
+      activePingChannel = -1;
+      pingStopRequested = false;
+      if (ch >= 0 && ch < 4) {
+        if (!(ethReady || staReady)) wd[ch].abortPing(now);
+        else {
+          WdState before = wd[ch].state;
+          WdAction a = wd[ch].reportPing(pingOutcome == 1, now);
+          applyWdAction(ch, a);
+          if (wd[ch].state == WD_LOCKOUT && before != WD_LOCKOUT)
+            watchdogEvent(ch, "lockout");
+          else if (wd[ch].state == WD_HEALTHY && before != WD_HEALTHY)
+            watchdogEvent(ch, "recovered");
+        }
+      }
+    }
+  }
+  if (pingHandle && !pingStopRequested &&
+      (uint32_t)(now - pingStartedAt) > 4500) {
+    pingStopRequested = true;
+    esp_ping_stop(pingHandle);
+  }
+
+  // Suspend target checks without Ethernet or WiFi STA.
+  // A power-off pulse always finishes and restores power.
+  bool networkReady = ethReady || staReady;
+  for (int i = 0; i < 4; ++i) {
+    WdState before = wd[i].state;
+    WdAction a = wd[i].tick(now, networkReady);
+    if (a == WD_SEND_PING) {
+      if (pingHandle) wd[i].pingPending = false;
+      else if (!beginPing(i)) wd[i].abortPing(now);
+    } else applyWdAction(i, a);
+    if (wd[i].state == WD_PAUSED && before != WD_PAUSED)
+      watchdogEvent(i, "network_paused");
+  }
+}
+
 void onMqttMessage(char *topic, byte *data, unsigned int n) {
   if (n > 32) return;
   String msg;
