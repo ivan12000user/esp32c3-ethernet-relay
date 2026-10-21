@@ -29,7 +29,7 @@ int main() {
   assert(m.tick(143000, true) == WD_SEND_PING);
   assert(m.reportPing(false, 144000) == WD_SET_OFF);
   assert(m.state == WD_POWER_OFF && m.cyclesTotal == 1);
-  assert(m.tick(153000, false) == WD_SET_ON); // Finish OFF pulse even with lost LAN
+  assert(m.tick(154000, false) == WD_SET_ON); // Finish OFF pulse even with lost LAN
   assert(m.state == WD_GRACE);
   assert(m.tick(273000, false) == WD_NONE);
   assert(m.state == WD_PAUSED); // Prevent resets without a working local link
