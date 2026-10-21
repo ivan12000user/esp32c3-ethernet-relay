@@ -41,22 +41,51 @@ public:
 
   bool active() const { return config.mode == WD_PING && config.armed; }
 
-  // A newly armed watchdog must first power its NO-wired load and wait for boot.
-  WdAction configure(const WdConfig &next, uint32_t now) {
+  // Called on every Web save: preserve active state and rate-limit history.
+  // Only an explicit resetLockout() may clear the one-hour cycle history.
+  WdAction configure(const WdConfig &next, uint32_t now, bool targetChanged = false) {
     const bool wasActive = active();
     const bool wasOff = state == WD_POWER_OFF;
     config = next;
-    pingPending = false;
-    failures = 0;
-    pulseActive = false;
+
     if (!active()) {
+      pingPending = false;
+      failures = 0;
+      pulseActive = false;
       state = WD_DISABLED;
       return wasOff ? WD_SET_ON : WD_NONE;
     }
-    state = WD_GRACE;
+
+    // Saving settings of an already armed channel is NOT permission
+    // to leave LOCKOUT, interrupt an OFF pulse, or energize it again.
+    if (wasActive) {
+      if (state == WD_LOCKOUT || state == WD_POWER_OFF) return WD_NONE;
+      if (targetChanged) {
+        pingPending = false;  // Ignore the previous target's in-flight reply.
+        failures = 0;
+        lastPingOk = false;
+        state = WD_GRACE;
+        dueMs = now + (uint32_t)config.graceSec * 1000UL;
+      }
+      return WD_NONE;
+    }
+
+    // A freshly armed channel must still respect earlier cycles this hour,
+    // even if it was disarmed and re-armed in between.
+    pingPending = false;
+    failures = 0;
+    pulseActive = false;
+    state = recentCycles(now) >= config.maxCycles ? WD_LOCKOUT : WD_GRACE;
     dueMs = now + (uint32_t)config.graceSec * 1000UL;
-    (void)wasActive;
     return WD_SET_ON;
+  }
+
+  uint8_t recentCycles(uint32_t now) const {
+    uint8_t count = 0;
+    for (uint8_t i = 0; i < historyUsed; ++i) {
+      if ((uint32_t)(now - history[i]) < 3600000UL) ++count;
+    }
+    return count;
   }
 
   WdAction startPulse(uint32_t now) {
@@ -119,11 +148,7 @@ public:
     state = WD_SUSPECT;
     if (failures < config.failLimit) return WD_NONE;
 
-    uint8_t count = 0;
-    for (uint8_t i = 0; i < historyUsed; ++i) {
-      if ((uint32_t)(now - history[i]) < 3600000UL) ++count;
-    }
-    if (count >= config.maxCycles) {
+    if (recentCycles(now) >= config.maxCycles) {
       state = WD_LOCKOUT;
       return WD_NONE; // Leave powered ON, require deliberate re-arm
     }
