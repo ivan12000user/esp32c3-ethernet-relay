@@ -1,0 +1,17 @@
+# Local credentials / private build configuration
+**/secrets.h
+**/local_secrets.h
+.env
+*.pem
+*.key
+
+# Arduino/PlatformIO output
+build/
+.pio/
+.vscode/
+*.bin
+*.elf
+*.map
+*.hex
+*.uf2
+*.log
