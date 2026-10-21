@@ -442,6 +442,18 @@ uint16_t readInputReg(uint16_t a) {
     case 6: return wifiMode;
     case 7: return staReady ? (uint16_t)(int16_t)WiFi.RSSI() : 0;
   }
+  if (a >= 8 && a < 32) {
+    int ch = (a - 8) / 6;
+    int item = (a - 8) % 6;
+    switch (item) {
+      case 0: return wd[ch].config.mode;
+      case 1: return wd[ch].state;
+      case 2: return wd[ch].failures;
+      case 3: return (uint16_t)(wd[ch].cyclesTotal & 0xFFFF);
+      case 4: return wd[ch].active() ? 1 : 0;
+      case 5: return wd[ch].lastPingOk ? 1 : 0;
+    }
+  }
   return 0;
 }
 
@@ -492,9 +504,9 @@ void processModbus() {
   if (fc == 4) {
     if (mbPos != 12) { mbException(fc, 3); return; }
     uint16_t a = mbWord(mbFrame+8), n = mbWord(mbFrame+10);
-    if (!n || n > 8) { mbException(fc, 3); return; }
-    if (a >= 8 || a + n > 8) { mbException(fc, 2); return; }
-    uint8_t body[17]; body[0] = n*2;
+    if (!n || n > 32) { mbException(fc, 3); return; }
+    if (a >= 32 || (uint32_t)a + n > 32) { mbException(fc, 2); return; }
+    uint8_t body[65]; body[0] = n*2;
     for (int i=0;i<n;i++) { uint16_t v=readInputReg(a+i); body[1+2*i]=v>>8; body[2+2*i]=v&255; }
     mbReply(fc, body, 1+n*2); return;
   }
@@ -579,7 +591,20 @@ void handleState() {
   json += ",\"rssi\":" + String(staReady ? WiFi.RSSI() : 0);
   json += ",\"mqtt_enabled\":"; json += mqttEnabled ? "true" : "false";
   json += ",\"mqtt_connected\":"; json += mqtt.connected() ? "true" : "false";
-  json += "}";
+  json += ",\"watchdogs\":[";
+  for (int i=0;i<4;++i) {
+    if (i) json += ",";
+    json += "{\"name\":\"" + jsonString(wdName[i]) + "\"";
+    json += ",\"mode\":" + String(wd[i].config.mode);
+    json += ",\"armed\":"; json += wd[i].active() ? "true" : "false";
+    json += ",\"ip\":\"" + wdTarget[i] + "\"";
+    json += ",\"state\":\"" + String(wdStateName(wd[i].state)) + "\"";
+    json += ",\"failures\":" + String(wd[i].failures);
+    json += ",\"cycles\":" + String(wd[i].cyclesTotal);
+    json += ",\"last_ping_ok\":"; json += wd[i].lastPingOk ? "true" : "false";
+    json += "}";
+  }
+  json += "]}";
   web.sendHeader("Cache-Control", "no-store");
   web.send(200, "application/json", json);
 }
