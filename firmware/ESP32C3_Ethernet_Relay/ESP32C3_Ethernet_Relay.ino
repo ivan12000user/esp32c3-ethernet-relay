@@ -9,10 +9,15 @@
 #include <Preferences.h>
 #include <PubSubClient.h>
 #include <Update.h>
-#include "secrets.h"  // local credentials; never commit secrets.h
+#include "secrets.h"
+#include "PingWatchdog.h"
+#include "ping/ping_sock.h"
+#include "lwip/ip_addr.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"  // local credentials; never commit secrets.h
 
 // ESP32-C3 SuperMini / W5500 / 4 relays, Arduino-ESP32 3.x
-// v1.3.0 | W5500 always enabled. WiFi: OFF / BACKUP / PARALLEL / AP
+// v1.4.0 | W5500 always enabled. WiFi: OFF / BACKUP / PARALLEL / AP
 #define ETH_CS 7
 #define ETH_IRQ 21
 #define ETH_RST -1
@@ -54,6 +59,32 @@ bool otaOK = false;
 uint8_t mbFrame[260];
 uint16_t mbPos = 0, mbTarget = 0;
 uint32_t mbLastByte = 0;
+
+WdMachine wd[4];
+String wdTarget[4] = {"", "", "", ""};
+String wdName[4] = {"Relay 1", "Relay 2", "Relay 3", "Relay 4"};
+
+struct PingEvent { uint8_t type; }; // success=1 timeout=2 end=3
+QueueHandle_t pingQueue = nullptr;
+esp_ping_handle_t pingHandle = nullptr;
+int activePingChannel = -1;
+uint8_t pingOutcome = 0;
+uint32_t pingStartedAt = 0;
+bool pingStopRequested = false;
+
+const char* wdStateName(WdState s) {
+  switch (s) {
+    case WD_DISABLED: return "DISABLED";
+    case WD_GRACE: return "GRACE";
+    case WD_HEALTHY: return "HEALTHY";
+    case WD_SUSPECT: return "SUSPECT";
+    case WD_POWER_OFF: return "POWER_OFF";
+    case WD_LOCKOUT: return "LOCKOUT";
+    case WD_PAUSED: return "PAUSED";
+    default: return "UNKNOWN";
+  }
+}
+
 
 String htmlEscape(String s) {
   s.replace("&", "&amp;"); s.replace("<", "&lt;");
@@ -340,7 +371,7 @@ const char INDEX_HTML[] PROGMEM =
   "<div class=\"net\" id=\"net\">Соединение...</div>\n"
   "<div id=\"relays\"></div>\n"
   "<div class=\"links\"><a href=\"/wifi\">Настройки Wi-Fi</a><a href=\"/mqtt\">Настройки MQTT</a><a href=\"/update\">Обновление .bin</a></div>\n"
-  "<div class=\"version\">Firmware v1.3.0 · Modbus TCP :502</div>\n"
+  "<div class=\"version\">Firmware v1.4.0 · Modbus TCP :502</div>\n"
   "<script>\n"
   "const area=document.getElementById('relays');\n"
   "for(let i=0;i<4;i++){\n"
@@ -516,7 +547,7 @@ void handleUpdatePage() {
   const char* page =
     "<!doctype html><html lang='ru'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'></head>"
     "<body style='background:#111827;color:white;font:16px Arial;max-width:520px;margin:40px auto;padding:20px'>"
-    "<h2>Web OTA · v1.3.0</h2><form method='POST' action='/update' enctype='multipart/form-data'>"
+    "<h2>Web OTA · v1.4.0</h2><form method='POST' action='/update' enctype='multipart/form-data'>"
     "<input type='file' name='firmware' accept='.bin' required><p><button type='submit'>Загрузить .bin</button></p>"
     "</form><p>Не отключайте питание во время обновления.</p><a style='color:#93c5fd' href='/'>Назад</a></body></html>";
   web.send(200,"text/html; charset=utf-8",page);
@@ -560,7 +591,7 @@ void setup() {
   }
   Serial.begin(115200);
   delay(500);
-  Serial.println("\nESP32-C3 Ethernet Relay v1.3.0");
+  Serial.println("\nESP32-C3 Ethernet Relay v1.4.0");
   loadSettings();
   mqtt.setCallback(onMqttMessage);
   mqtt.setBufferSize(512);
