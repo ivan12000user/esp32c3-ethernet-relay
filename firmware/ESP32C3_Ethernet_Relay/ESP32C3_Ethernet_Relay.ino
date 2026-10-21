@@ -601,6 +601,7 @@ void handleState() {
     json += ",\"state\":\"" + String(wdStateName(wd[i].state)) + "\"";
     json += ",\"failures\":" + String(wd[i].failures);
     json += ",\"cycles\":" + String(wd[i].cyclesTotal);
+    json += ",\"cycles_hour\":" + String(wd[i].recentCycles(millis()));
     json += ",\"last_ping_ok\":"; json += wd[i].lastPingOk ? "true" : "false";
     json += "}";
   }
@@ -623,7 +624,7 @@ void handleSet() {
 
 const char* SETTINGS_STYLE =
   "<meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
-  "<style>body{font-family:Arial;background:#111827;color:#f8fafc;max-width:560px;margin:24px auto;padding:18px}"
+  "<style>*{box-sizing:border-box}body{font-family:Arial;background:#111827;color:#f8fafc;max-width:560px;margin:24px auto;padding:18px}"
   "label{display:block;margin-top:15px}input[type=text],input[type=password],input[type=number],select{width:100%;padding:12px;margin-top:6px;border:1px solid #475569;background:#243247;color:white;border-radius:8px}"
   "button{background:#059669;color:white;padding:13px 28px;margin-top:22px;border:0;border-radius:8px;font-size:16px}a{color:#93c5fd}small{color:#94a3b8}</style>";
 
@@ -784,6 +785,8 @@ void handleWatchdogPage() {
     page += "<p><small>Состояние: "+String(wdStateName(wd[i].state));
     page += " | ping ошибок: "+String(wd[i].failures);
     page += " | циклов с запуска: "+String(wd[i].cyclesTotal);
+    page += " | за час: "+String(wd[i].recentCycles(millis()));
+    page += " / "+String(c.maxCycles);
     page += "</small></p></fieldset>";
   }
   page += "<button type='submit'>Сохранить настройки</button></form>";
@@ -842,9 +845,10 @@ void handleWatchdogSave() {
   }
   // All four channels validated; apply atomically at a logical level.
   for (int i=0; i<4; ++i) {
-    wdTarget[i]=ips[i];
-    wdName[i]=names[i];
-    applyWdAction(i, wd[i].configure(changed[i],millis()));
+    const bool targetChanged = (wdTarget[i] != ips[i]);
+    wdTarget[i] = ips[i];
+    wdName[i] = names[i];
+    applyWdAction(i, wd[i].configure(changed[i], millis(), targetChanged));
   }
   saveWatchdogSettings();
   web.sendHeader("Location","/watchdog");
@@ -858,6 +862,9 @@ void handleWatchdogReset() {
     web.send(400,"text/plain","Invalid channel"); return;
   }
   int ch=s[0]-'0';
+  if (wd[ch].state != WD_LOCKOUT) {
+    web.send(409, "text/plain", "Channel is not in LOCKOUT"); return;
+  }
   wd[ch].resetLockout(millis());
   watchdogEvent(ch,"lockout_cleared");
   web.sendHeader("Location","/watchdog");
