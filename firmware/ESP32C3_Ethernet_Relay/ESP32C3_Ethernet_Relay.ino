@@ -538,7 +538,7 @@ const char INDEX_HTML[] PROGMEM =
   "<h2>ESP32-C3 Ethernet Relay</h2>\n"
   "<div class=\"net\" id=\"net\">Соединение...</div>\n"
   "<div id=\"relays\"></div>\n"
-  "<div class=\"links\"><a href=\"/wifi\">Настройки Wi-Fi</a><a href=\"/mqtt\">Настройки MQTT</a><a href=\"/update\">Обновление .bin</a></div>\n"
+  "<div class=\"links\"><a href=\"/wifi\">Настройки Wi-Fi</a><a href=\"/mqtt\">Настройки MQTT</a><a href=\"/watchdog\">Watchdog</a><a href=\"/update\">Обновление .bin</a></div>\n"
   "<div class=\"version\">Firmware v1.4.0 · Modbus TCP :502</div>\n"
   "<script>\n"
   "const area=document.getElementById('relays');\n"
@@ -713,6 +713,132 @@ void handleMqttSave() {
   web.sendHeader("Location", "/mqtt"); web.send(303,"text/plain","");
 }
 
+
+String wdFieldName(const char* prefix, int ch) { return String(prefix) + String(ch); }
+String jsonString(String s) {
+  s.replace("\\", "\\\\");
+  s.replace("\"", "\\\"");
+  s.replace("\n", " ");
+  s.replace("\r", " ");
+  return s;
+}
+
+void handleWatchdogPage() {
+  if (!requireAdmin()) return;
+  String page;
+  page.reserve(12500);
+  page = "<!doctype html><html lang='ru'><head>";
+  page += SETTINGS_STYLE;
+  page += "<title>Watchdog</title></head><body><h2>Реле / Ping Watchdog</h2>";
+  page += "<p><small>На каждом канале свой режим и IP. Управление автоматикой отключено, пока не включён флажок «Активировать». Watchdog подразумевает питание через NO: ON=питание подано.</small></p>";
+  page += "<form method='POST' action='/watchdog/save'>";
+  for (int i=0; i<4; ++i) {
+    const WdConfig &c = wd[i].config;
+    String ch = String(i);
+    page += "<fieldset style='border:1px solid #475569;border-radius:10px;margin:16px 0;padding:12px'>";
+    page += "<legend>Реле " + String(i+1) + " — " + htmlEscape(wdName[i]) + "</legend>";
+    page += "<label>Имя<input type='text' maxlength='32' name='name"+ch+"' value='"+htmlEscape(wdName[i])+"'></label>";
+    page += "<label>Режим<select name='mode"+ch+"'>";
+    const char* modes[]={"Ручной ON/OFF","Импульсный","Ping Watchdog"};
+    for (int m=0; m<3; ++m) {
+      page += "<option value='"+String(m)+"'";
+      if (c.mode==m) page+=" selected";
+      page+=">"+String(modes[m])+"</option>";
+    }
+    page += "</select></label>";
+    page += "<label><input type='checkbox' name='arm"+ch+"'";
+    if (c.armed && c.mode==WD_PING) page += " checked";
+    page += "> Активировать Ping Watchdog (может включить реле)</label>";
+    page += "<label>Контролируемый IPv4<input type='text' maxlength='15' name='ip"+ch+"' value='"+htmlEscape(wdTarget[i])+"' placeholder='192.168.1.1'></label>";
+    page += "<label>Период проверки, с<input type='number' name='int"+ch+"' min='5' max='3600' value='"+String(c.intervalSec)+"'></label>";
+    page += "<label>Неудач подряд<input type='number' name='fail"+ch+"' min='1' max='20' value='"+String(c.failLimit)+"'></label>";
+    page += "<label>Длительность OFF, с<input type='number' name='off"+ch+"' min='1' max='300' value='"+String(c.offSec)+"'></label>";
+    page += "<label>Ожидание загрузки, с<input type='number' name='gr"+ch+"' min='10' max='1800' value='"+String(c.graceSec)+"'></label>";
+    page += "<label>Перезапусков в час<input type='number' name='cap"+ch+"' min='1' max='10' value='"+String(c.maxCycles)+"'></label>";
+    page += "<label>Импульс, мс<input type='number' name='pulse"+ch+"' min='100' max='60000' value='"+String(c.pulseMs)+"'></label>";
+    page += "<p><small>Состояние: "+String(wdStateName(wd[i].state));
+    page += " | ping ошибок: "+String(wd[i].failures);
+    page += " | циклов с запуска: "+String(wd[i].cyclesTotal);
+    page += "</small></p></fieldset>";
+  }
+  page += "<button type='submit'>Сохранить настройки</button></form>";
+  page += "<form method='POST' action='/watchdog/reset'>";
+  page += "<label>Снять блокировку канала<select name='ch'>";
+  for(int i=0;i<4;i++)page+="<option value='"+String(i)+"'>Реле "+String(i+1)+"</option>";
+  page+="</select></label><button type='submit'>Сбросить LOCKOUT</button></form>";
+  page+="<p><a href='/'>На главную</a></p></body></html>";
+  web.send(200,"text/html; charset=utf-8",page);
+}
+
+bool validWdNum(const String &s, long minVal, long maxVal, long &out) {
+  if (s.length()==0) return false;
+  for (unsigned int i=0; i<s.length(); ++i) if (s[i]<'0'||s[i]>'9') return false;
+  out=s.toInt();
+  return out>=minVal && out<=maxVal;
+}
+
+void handleWatchdogSave() {
+  if (!requireAdmin()) return;
+  WdConfig changed[4];
+  String names[4], ips[4];
+  for (int i=0; i<4; ++i) {
+    String k=String(i);
+    String mode=web.arg("mode"+k);
+    if (mode.length()!=1 || mode[0]<'0' || mode[0]>'2') {
+      web.send(400,"text/plain","Invalid mode"); return;
+    }
+    changed[i].mode=mode[0]-'0';
+    changed[i].armed=(changed[i].mode==WD_PING && web.hasArg("arm"+k));
+    names[i]=web.arg("name"+k);
+    names[i].trim();
+    ips[i]=web.arg("ip"+k);
+    ips[i].trim();
+    IPAddress ip;
+    if (names[i].length()<1 || names[i].length()>32 ||
+       (ips[i].length() && (!ip.fromString(ips[i]) || ip[0]==0 || ip[0]>=224))) {
+      web.send(400,"text/plain","Invalid channel name / IPv4"); return;
+    }
+    if (changed[i].armed && ips[i].isEmpty()) {
+      web.send(400,"text/plain","Armed watchdog requires target IP"); return;
+    }
+    long v;
+    if (!validWdNum(web.arg("int"+k),5,3600,v)) { web.send(400,"text/plain","Bad interval"); return; }
+    changed[i].intervalSec=v;
+    if (!validWdNum(web.arg("fail"+k),1,20,v)) { web.send(400,"text/plain","Bad failure threshold"); return; }
+    changed[i].failLimit=v;
+    if (!validWdNum(web.arg("off"+k),1,300,v)) { web.send(400,"text/plain","Bad OFF duration"); return; }
+    changed[i].offSec=v;
+    if (!validWdNum(web.arg("gr"+k),10,1800,v)) { web.send(400,"text/plain","Bad boot grace"); return; }
+    changed[i].graceSec=v;
+    if (!validWdNum(web.arg("cap"+k),1,10,v)) { web.send(400,"text/plain","Bad cycles/hour"); return; }
+    changed[i].maxCycles=v;
+    if (!validWdNum(web.arg("pulse"+k),100,60000,v)) { web.send(400,"text/plain","Bad pulse ms"); return; }
+    changed[i].pulseMs=v;
+  }
+  // All four channels validated; apply atomically at a logical level.
+  for (int i=0; i<4; ++i) {
+    wdTarget[i]=ips[i];
+    wdName[i]=names[i];
+    applyWdAction(i, wd[i].configure(changed[i],millis()));
+  }
+  saveWatchdogSettings();
+  web.sendHeader("Location","/watchdog");
+  web.send(303,"text/plain","");
+}
+
+void handleWatchdogReset() {
+  if (!requireAdmin()) return;
+  String s=web.arg("ch");
+  if (s.length()!=1 || s[0]<'0'||s[0]>'3') {
+    web.send(400,"text/plain","Invalid channel"); return;
+  }
+  int ch=s[0]-'0';
+  wd[ch].resetLockout(millis());
+  watchdogEvent(ch,"lockout_cleared");
+  web.sendHeader("Location","/watchdog");
+  web.send(303,"text/plain","");
+}
+
 void handleUpdatePage() {
   if (!requireAdmin()) return;
   const char* page =
@@ -778,6 +904,9 @@ void setup() {
   web.on("/wifi/save",HTTP_POST,handleWifiSave);
   web.on("/mqtt",HTTP_GET,handleMqttPage);
   web.on("/mqtt/save",HTTP_POST,handleMqttSave);
+  web.on("/watchdog",HTTP_GET,handleWatchdogPage);
+  web.on("/watchdog/save",HTTP_POST,handleWatchdogSave);
+  web.on("/watchdog/reset",HTTP_POST,handleWatchdogReset);
   web.on("/update",HTTP_GET,handleUpdatePage);
   web.on("/update",HTTP_POST,handleUpdateResult,handleUpdateUpload);
   Network.onEvent(onNetworkEvent);
