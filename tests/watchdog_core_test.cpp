@@ -80,6 +80,54 @@ int main() {
   assert(m.tick(0x000000F3u, true) == WD_NONE);
   assert(m.tick(0x000000F4u, true) == WD_SET_OFF);
 
+  // Regression: Web settings saves must never clear an active lockout.
+  WdMachine guarded;
+  WdConfig limited=watchdogConfig();
+  limited.failLimit=1;
+  limited.intervalSec=5;
+  limited.graceSec=10;
+  limited.offSec=3;
+  limited.maxCycles=1;
+  assert(guarded.configure(limited, 0) == WD_SET_ON);
+  assert(guarded.tick(10000, true) == WD_SEND_PING);
+  assert(guarded.reportPing(false, 10100) == WD_SET_OFF);
+  assert(guarded.cyclesTotal == 1);
+  assert(guarded.recentCycles(10100) == 1);
+  assert(guarded.configure(limited, 10101) == WD_NONE);
+  assert(guarded.state == WD_POWER_OFF);
+  assert(guarded.tick(13100, true) == WD_SET_ON);
+  assert(guarded.tick(23100, true) == WD_SEND_PING);
+  assert(guarded.reportPing(false, 23200) == WD_NONE);
+  assert(guarded.state == WD_LOCKOUT);
+  assert(guarded.configure(limited, 23201) == WD_NONE);
+  assert(guarded.state == WD_LOCKOUT);
+  assert(guarded.cyclesTotal == 1);
+
+  // Disarming/rearming does not bypass the one-hour lockout.
+  WdConfig disarmed = limited;
+  disarmed.armed=false;
+  assert(guarded.configure(disarmed, 23202) == WD_NONE);
+  assert(guarded.state == WD_DISABLED);
+  assert(guarded.configure(limited, 23203) == WD_SET_ON);
+  assert(guarded.state == WD_LOCKOUT);
+  assert(guarded.recentCycles(23203) == 1);
+  guarded.resetLockout(23300);
+  assert(guarded.state == WD_GRACE);
+  assert(guarded.recentCycles(23300) == 0); // Explicit reset clears limit.
+  assert(guarded.cyclesTotal == 1); // Lifetime counter is retained.
+
+  // Retargeting restarts grace but does not actuate an already powered relay.
+  WdMachine retargeted;
+  assert(retargeted.configure(limited, 100) == WD_SET_ON);
+  assert(retargeted.tick(10100, true) == WD_SEND_PING);
+  assert(retargeted.reportPing(true, 10101) == WD_NONE);
+  assert(retargeted.state == WD_HEALTHY);
+  assert(retargeted.configure(limited, 10500, true) == WD_NONE);
+  assert(retargeted.state == WD_GRACE);
+  assert(retargeted.lastPingOk == false);
+  assert(retargeted.tick(20499, true) == WD_NONE);
+  assert(retargeted.tick(20500, true) == WD_SEND_PING);
+
   std::puts("watchdog core tests passed");
   return 0;
 }
