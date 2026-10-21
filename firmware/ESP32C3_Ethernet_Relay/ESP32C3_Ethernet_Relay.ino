@@ -309,9 +309,9 @@ void onMqttMessage(char *topic, byte *data, unsigned int n) {
   msg.trim(); msg.toUpperCase();
   for (int ch = 0; ch < 4; ++ch) {
     if (String(topic) != topicSet(ch)) continue;
-    if (msg == "ON" || msg == "1") setRelay(ch, true);
-    else if (msg == "OFF" || msg == "0") setRelay(ch, false);
-    else if (msg == "TOGGLE") setRelay(ch, !relayState[ch]);
+    if (msg == "ON" || msg == "1") commandRelay(ch, true);
+    else if (msg == "OFF" || msg == "0") commandRelay(ch, false);
+    else if (msg == "TOGGLE") commandRelay(ch, !relayState[ch]);
     break;
   }
 }
@@ -473,7 +473,8 @@ void processModbus() {
     uint16_t a = mbWord(mbFrame+8), v = mbWord(mbFrame+10);
     if (a >= 4) { mbException(fc, 2); return; }
     if (v != 0xFF00 && v != 0) { mbException(fc, 3); return; }
-    setRelay(a, v == 0xFF00); mbReply(fc, mbFrame+8, 4); return;
+    if (!commandRelay(a, v == 0xFF00)) { mbException(fc, 6); return; }
+    mbReply(fc, mbFrame+8, 4); return;
   }
   if (fc == 15) {
     if (mbPos < 14) { mbException(fc, 3); return; }
@@ -482,7 +483,10 @@ void processModbus() {
     if (!n || n > 4) { mbException(fc, 3); return; }
     if (a >= 4 || a + n > 4) { mbException(fc, 2); return; }
     if (count != (n+7)/8 || mbPos != 13+count) { mbException(fc, 3); return; }
-    for (int i = 0; i < n; i++) setRelay(a+i, (mbFrame[13+i/8] >> (i%8)) & 1);
+    for (int i = 0; i < n; i++)
+      if (wd[a+i].active()) { mbException(fc, 6); return; }
+    for (int i = 0; i < n; i++)
+      commandRelay(a+i, (mbFrame[13+i/8] >> (i%8)) & 1);
     mbReply(fc, mbFrame+8, 4); return;
   }
   if (fc == 4) {
@@ -586,7 +590,10 @@ void handleSet() {
   if (ch.length() != 1 || ch[0] < '0' || ch[0] > '3' || (val != "0" && val != "1")) {
     web.send(400, "text/plain", "Invalid relay command"); return;
   }
-  setRelay(ch[0]-'0', val == "1"); web.send(200, "text/plain", "OK");
+  if (!commandRelay(ch[0]-'0', val == "1")) {
+    web.send(409, "text/plain", "Watchdog owns this relay; disarm it first"); return;
+  }
+  web.send(200, "text/plain", "OK");
 }
 
 const char* SETTINGS_STYLE =
@@ -757,6 +764,8 @@ void setup() {
   delay(500);
   Serial.println("\nESP32-C3 Ethernet Relay v1.4.0");
   loadSettings();
+  loadWatchdogSettings();
+  pingQueue = xQueueCreate(12, sizeof(PingEvent));
   mqtt.setCallback(onMqttMessage);
   mqtt.setBufferSize(512);
   mqtt.setKeepAlive(20);
@@ -793,5 +802,6 @@ void loop() {
     serviceModbus();
   }
   serviceMqtt();
+  serviceWatchdogs();
   delay(2);
 }
