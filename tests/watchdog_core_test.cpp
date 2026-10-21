@@ -43,16 +43,25 @@ int main() {
 
   // Failover lockout protects against repeated cycling.
   for (int cycle=0; cycle<2; ++cycle) {
-    uint32_t now = 404200 + cycle*155000U;
+    uint32_t now = 404200 + cycle*150600U;
     for (int j=0;j<3;++j) {
       assert(m.tick(now, true) == WD_SEND_PING);
       WdAction a=m.reportPing(false, now+200);
       assert(a == (j==2 ? WD_SET_OFF : WD_NONE));
       now += 10200;
     }
-    assert(m.tick(now+10000, true) == WD_SET_ON);
+    assert(m.tick(now, true) == WD_SET_ON);
     // Grace 120 seconds
   }
+  // Fourth attempted cycle during the same hour enters lockout.
+  uint32_t now=705400;
+  for (int j=0;j<3;++j) {
+    assert(m.tick(now, true) == WD_SEND_PING);
+    WdAction a=m.reportPing(false, now+200);
+    assert(a == WD_NONE);
+    now += 10200;
+  }
+  assert(m.state == WD_LOCKOUT && m.cyclesTotal == 3);
   // A locked channel may be re-armed explicitly, without an OFF command.
   m.resetLockout(1200000);
   assert(m.state == WD_GRACE && m.failures == 0);
