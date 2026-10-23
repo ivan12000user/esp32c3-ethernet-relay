@@ -17,7 +17,9 @@
 #include "freertos/queue.h"  // local credentials; never commit secrets.h
 
 // ESP32-C3 SuperMini / W5500 / 4 relays, Arduino-ESP32 3.x
-// v1.4.0 | W5500 always enabled. WiFi: OFF / BACKUP / PARALLEL / AP
+// v1.4.1-dev | W5500 always enabled. WiFi: OFF / BACKUP / PARALLEL / AP
+// Limit transmitter power to 8.5 dBm (STA and AP). Does not change Ethernet.
+static const wifi_power_t WIFI_TX_POWER = WIFI_POWER_8_5dBm;
 #define ETH_CS 7
 #define ETH_IRQ 21
 #define ETH_RST -1
@@ -344,12 +346,21 @@ void serviceMqtt() {
   }
 }
 
+void applyWifiTxPower(const char* role) {
+  // Arduino-ESP32 requires the STA/AP interface to have been started first.
+  const bool ok = WiFi.setTxPower(WIFI_TX_POWER);
+  const float actualDbm = (float)(int)WiFi.getTxPower() / 4.0f;
+  Serial.printf("WiFi %s TX limit requested 8.5 dBm: %s; readback %.1f dBm\n",
+                role, ok ? "OK" : "FAILED", actualDbm);
+}
+
 void startSta() {
   if (staStarted || wifiSsid.isEmpty()) return;
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
   WiFi.setAutoReconnect(true);
   WiFi.begin(wifiSsid.c_str(), wifiPassword.c_str());
+  applyWifiTxPower("STA");
   staStarted = true;
   wifiLastTry = millis();
   Serial.printf("WiFi STA starting: %s\n", wifiSsid.c_str());
@@ -423,6 +434,7 @@ void startWifiMode() {
     WiFi.mode(WIFI_AP);
     WiFi.softAPConfig(IPAddress(192,168,4,1), IPAddress(192,168,4,1), IPAddress(255,255,255,0));
     bool ok = WiFi.softAP(apSsid.c_str(), apPassword.c_str());
+    if (ok) applyWifiTxPower("AP");
     Serial.printf("WiFi AP: %s, SSID: %s, IP: %s\n", ok ? "OK" : "FAILED",
                   apSsid.c_str(), WiFi.softAPIP().toString().c_str());
   }
@@ -551,7 +563,7 @@ const char INDEX_HTML[] PROGMEM =
   "<div class=\"net\" id=\"net\">Соединение...</div>\n"
   "<div id=\"relays\"></div>\n"
   "<div class=\"links\"><a href=\"/wifi\">Настройки Wi-Fi</a><a href=\"/mqtt\">Настройки MQTT</a><a href=\"/watchdog\">Watchdog</a><a href=\"/update\">Обновление .bin</a></div>\n"
-  "<div class=\"version\">Firmware v1.4.0 · Modbus TCP :502</div>\n"
+  "<div class=\"version\">Firmware v1.4.1-dev · Wi-Fi TX 8.5 dBm · Modbus TCP :502</div>\n"
   "<script>\n"
   "const area=document.getElementById('relays');\n"
   "for(let i=0;i<4;i++){\n"
@@ -589,6 +601,8 @@ void handleState() {
   json += ",\"ap_ip\":\"" + WiFi.softAPIP().toString() + "\"";
   json += ",\"ap_ssid\":\"" + htmlEscape(apSsid) + "\"";
   json += ",\"rssi\":" + String(staReady ? WiFi.RSSI() : 0);
+  json += ",\"wifi_tx_dbm\":" + String((staStarted || apReady)
+                                    ? (float)(int)WiFi.getTxPower() / 4.0f : 0.0f, 1);
   json += ",\"mqtt_enabled\":"; json += mqttEnabled ? "true" : "false";
   json += ",\"mqtt_connected\":"; json += mqtt.connected() ? "true" : "false";
   json += ",\"watchdogs\":[";
@@ -876,7 +890,7 @@ void handleUpdatePage() {
   const char* page =
     "<!doctype html><html lang='ru'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'></head>"
     "<body style='background:#111827;color:white;font:16px Arial;max-width:520px;margin:40px auto;padding:20px'>"
-    "<h2>Web OTA · v1.4.0</h2><form method='POST' action='/update' enctype='multipart/form-data'>"
+    "<h2>Web OTA · v1.4.1-dev</h2><form method='POST' action='/update' enctype='multipart/form-data'>"
     "<input type='file' name='firmware' accept='.bin' required><p><button type='submit'>Загрузить .bin</button></p>"
     "</form><p>Не отключайте питание во время обновления.</p><a style='color:#93c5fd' href='/'>Назад</a></body></html>";
   web.send(200,"text/html; charset=utf-8",page);
@@ -920,7 +934,7 @@ void setup() {
   }
   Serial.begin(115200);
   delay(500);
-  Serial.println("\nESP32-C3 Ethernet Relay v1.4.0");
+  Serial.println("\nESP32-C3 Ethernet Relay v1.4.1-dev (WiFi TX 8.5 dBm)");
   loadSettings();
   loadWatchdogSettings();
   pingQueue = xQueueCreate(12, sizeof(PingEvent));
