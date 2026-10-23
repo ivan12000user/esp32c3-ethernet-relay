@@ -9,6 +9,14 @@
 - Field-tested Ethernet, STA, Web, FC01, FC05 relay actuation, MQTT commands/states
 - Repository copy externalizes Web/AP passwords into untracked `secrets.h` (small intentional build configuration change)
 
+## v1.4.1-dev (2026-10-23, unreleased)
+
+- Limit maximum Wi-Fi transmit power to **8.5 dBm** for both STA and AP.
+- Apply limit just after `WiFi.begin()` and successful `WiFi.softAP()` startup, including Wi-Fi backup restarts.
+- Report `wifi_tx_dbm` via `/api/state` and readback in Serial Monitor.
+- Preserve existing Wi-Fi modes, W5500 Ethernet, relay control, Web/MQTT/Modbus/OTA/watchdog features.
+- **Not yet tested on real ESP32-C3 hardware**. Keep watchdog disarmed until runtime checks are complete.
+
 ## v1.4.0 (candidate, hardware testing in progress; not released)
 
 - Four independent per-channel ping watchdogs with NVS settings, Web UI, MQTT events, Modbus diagnostics and lockouts.
