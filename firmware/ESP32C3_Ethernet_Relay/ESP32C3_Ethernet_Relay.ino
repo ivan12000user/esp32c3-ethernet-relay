@@ -9,15 +9,14 @@
 #include <Preferences.h>
 #include <PubSubClient.h>
 #include <Update.h>
-#include "secrets.h"
 #include "PingWatchdog.h"
 #include "ping/ping_sock.h"
 #include "lwip/ip_addr.h"
 #include "freertos/FreeRTOS.h"
-#include "freertos/queue.h"  // local credentials; never commit secrets.h
+#include "freertos/queue.h"
 
 // ESP32-C3 SuperMini / W5500 / 4 relays, Arduino-ESP32 3.x
-// v1.4.1-dev | W5500 always enabled. WiFi: OFF / BACKUP / PARALLEL / AP
+// v1.4.2-dev | W5500 always enabled. WiFi: OFF / BACKUP / PARALLEL / AP
 // Limit transmitter power to 8.5 dBm (STA and AP). Does not change Ethernet.
 static const wifi_power_t WIFI_TX_POWER = WIFI_POWER_8_5dBm;
 #define ETH_CS 7
@@ -29,14 +28,13 @@ static const wifi_power_t WIFI_TX_POWER = WIFI_POWER_8_5dBm;
 
 const uint8_t relayPins[4] = {0, 1, 3, 10};
 bool relayState[4] = {false, false, false, false};
-const char *WEB_USER = "admin";
-const char *WEB_PASSWORD = RELAY_WEB_PASSWORD;
+// No Web password. Restrict access to HTTP:80 and Modbus:502 at network level.
 
 // 0 OFF, 1 Ethernet failover STA, 2 ETH+STA simultaneously, 3 ETH+local AP
 uint8_t wifiMode = 0;
 String wifiSsid, wifiPassword;
 String apSsid = "ESP32C3-Relay";
-String apPassword = RELAY_AP_PASSWORD;
+String apPassword = "12357895"; // AP default; saved /wifi settings may override.
 
 bool mqttEnabled = false;
 String mqttHost, mqttUser, mqttPassword, mqttBase = "ethernet-relay";
@@ -95,11 +93,7 @@ String htmlEscape(String s) {
   return s;
 }
 
-bool requireAdmin() {
-  if (web.authenticate(WEB_USER, WEB_PASSWORD)) return true;
-  web.requestAuthentication();
-  return false;
-}
+
 
 void loadSettings() {
   prefs.begin("relay-mqtt", true);
@@ -118,11 +112,11 @@ void loadSettings() {
   wifiSsid = prefs.getString("ssid", "");
   wifiPassword = prefs.getString("pass", "");
   apSsid = prefs.getString("ap_ssid", "ESP32C3-Relay");
-  apPassword = prefs.getString("ap_pass", RELAY_AP_PASSWORD);
+  apPassword = prefs.getString("ap_pass", "12357895");
   prefs.end();
   if (wifiMode > 3) wifiMode = 0;
   if (apSsid.isEmpty()) apSsid = "ESP32C3-Relay";
-  if (apPassword.length() < 8) apPassword = RELAY_AP_PASSWORD;
+  if (apPassword.length() < 8) apPassword = "12357895";
 }
 
 String topicSet(int i) { return mqttBase + "/relay" + String(i + 1) + "/set"; }
@@ -563,7 +557,7 @@ const char INDEX_HTML[] PROGMEM =
   "<div class=\"net\" id=\"net\">Соединение...</div>\n"
   "<div id=\"relays\"></div>\n"
   "<div class=\"links\"><a href=\"/wifi\">Настройки Wi-Fi</a><a href=\"/mqtt\">Настройки MQTT</a><a href=\"/watchdog\">Watchdog</a><a href=\"/update\">Обновление .bin</a></div>\n"
-  "<div class=\"version\">Firmware v1.4.1-dev · Wi-Fi TX 8.5 dBm · Modbus TCP :502</div>\n"
+  "<div class=\"version\">Firmware v1.4.2-dev · Wi-Fi TX 8.5 dBm · Modbus TCP :502</div>\n"
   "<script>\n"
   "const area=document.getElementById('relays');\n"
   "for(let i=0;i<4;i++){\n"
@@ -643,7 +637,6 @@ const char* SETTINGS_STYLE =
   "button{background:#059669;color:white;padding:13px 28px;margin-top:22px;border:0;border-radius:8px;font-size:16px}a{color:#93c5fd}small{color:#94a3b8}</style>";
 
 void handleWifiPage() {
-  if (!requireAdmin()) return;
   String page; page.reserve(4400);
   page = "<!doctype html><html lang='ru'><head>";
   page += SETTINGS_STYLE;
@@ -667,13 +660,12 @@ void handleWifiPage() {
   page += "<h3>Собственная точка доступа (AP)</h3>";
   page += "<label>SSID AP<input type='text' name='apssid' maxlength='32' value='" + htmlEscape(apSsid) + "'></label>";
   page += "<label>Пароль AP (8–63 символа; пусто — оставить текущий)<input type='password' name='appass' maxlength='63' autocomplete='new-password'></label>";
-  page += "<p><small>Пароль AP задаётся в secrets.h. Адрес точки доступа: 192.168.4.1.</small></p>";
+  page += "<p><small>Пароль AP по умолчанию: 12357895. Ранее сохранённый пароль AP имеет приоритет. Адрес AP: 192.168.4.1.</small></p>";
   page += "<button type='submit'>Сохранить и перезагрузить</button></form><p><a href='/'>На главную</a></p></body></html>";
   web.send(200, "text/html; charset=utf-8", page);
 }
 
 void handleWifiSave() {
-  if (!requireAdmin()) return;
   String m = web.arg("mode"), ssid = web.arg("ssid"), apssid = web.arg("apssid");
   String pass = web.arg("pass"), appass = web.arg("appass");
   if (m.length()!=1 || m[0]<'0' || m[0]>'3' || ssid.length()>32 || apssid.isEmpty() || apssid.length()>32) {
@@ -706,7 +698,6 @@ void handleWifiSave() {
 }
 
 void handleMqttPage() {
-  if (!requireAdmin()) return;
   String page; page.reserve(3000);
   page = "<!doctype html><html lang='ru'><head>";
   page += SETTINGS_STYLE;
@@ -726,7 +717,6 @@ void handleMqttPage() {
 }
 
 void handleMqttSave() {
-  if (!requireAdmin()) return;
   String host=web.arg("host"), user=web.arg("user"), topic=web.arg("topic"), pass=web.arg("pass");
   host.trim(); topic.trim();
   long port=web.arg("port").toInt();
@@ -764,7 +754,6 @@ String jsonString(String s) {
 }
 
 void handleWatchdogPage() {
-  if (!requireAdmin()) return;
   String page;
   page.reserve(12500);
   page = "<!doctype html><html lang='ru'><head>";
@@ -820,7 +809,6 @@ bool validWdNum(const String &s, long minVal, long maxVal, long &out) {
 }
 
 void handleWatchdogSave() {
-  if (!requireAdmin()) return;
   WdConfig changed[4];
   String names[4], ips[4];
   for (int i=0; i<4; ++i) {
@@ -870,7 +858,6 @@ void handleWatchdogSave() {
 }
 
 void handleWatchdogReset() {
-  if (!requireAdmin()) return;
   String s=web.arg("ch");
   if (s.length()!=1 || s[0]<'0'||s[0]>'3') {
     web.send(400,"text/plain","Invalid channel"); return;
@@ -886,18 +873,16 @@ void handleWatchdogReset() {
 }
 
 void handleUpdatePage() {
-  if (!requireAdmin()) return;
   const char* page =
     "<!doctype html><html lang='ru'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'></head>"
     "<body style='background:#111827;color:white;font:16px Arial;max-width:520px;margin:40px auto;padding:20px'>"
-    "<h2>Web OTA · v1.4.1-dev</h2><form method='POST' action='/update' enctype='multipart/form-data'>"
+    "<h2>Web OTA · v1.4.2-dev</h2><form method='POST' action='/update' enctype='multipart/form-data'>"
     "<input type='file' name='firmware' accept='.bin' required><p><button type='submit'>Загрузить .bin</button></p>"
     "</form><p>Не отключайте питание во время обновления.</p><a style='color:#93c5fd' href='/'>Назад</a></body></html>";
   web.send(200,"text/html; charset=utf-8",page);
 }
 
 void handleUpdateUpload() {
-  if (!web.authenticate(WEB_USER, WEB_PASSWORD)) return;
   HTTPUpload &upload=web.upload();
   if (upload.status==UPLOAD_FILE_START) {
     otaOK=Update.begin(UPDATE_SIZE_UNKNOWN);
@@ -918,7 +903,6 @@ void handleUpdateUpload() {
 }
 
 void handleUpdateResult() {
-  if (!requireAdmin()) return;
   if (otaOK && !Update.hasError()) {
     web.send(200,"text/html; charset=utf-8","<meta charset='utf-8'><h2>Прошивка загружена.</h2><p>Перезагрузка...</p>");
     rebootAt=millis()+2000;
@@ -934,7 +918,7 @@ void setup() {
   }
   Serial.begin(115200);
   delay(500);
-  Serial.println("\nESP32-C3 Ethernet Relay v1.4.1-dev (WiFi TX 8.5 dBm)");
+  Serial.println("\nESP32-C3 Ethernet Relay v1.4.2-dev (WiFi TX 8.5 dBm / Web no password)");
   loadSettings();
   loadWatchdogSettings();
   pingQueue = xQueueCreate(12, sizeof(PingEvent));
