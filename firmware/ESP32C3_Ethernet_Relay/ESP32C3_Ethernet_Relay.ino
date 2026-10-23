@@ -16,7 +16,7 @@
 #include "freertos/queue.h"
 
 // ESP32-C3 SuperMini / W5500 / 4 relays, Arduino-ESP32 3.x
-// v1.4.3-dev | W5500 always enabled. WiFi: OFF / BACKUP / PARALLEL / AP
+// v1.4.4-dev | W5500 always enabled. WiFi: OFF / BACKUP / PARALLEL / AP
 // Limit transmitter power to 8.5 dBm (STA and AP). Does not change Ethernet.
 static const wifi_power_t WIFI_TX_POWER = WIFI_POWER_8_5dBm;
 #define ETH_CS 7
@@ -60,6 +60,7 @@ uint8_t currentRoute = 0; // 0 none, 1 Ethernet, 2 WiFi STA
 uint32_t startAt = 0, wifiLastTry = 0, mqttLastTry = 0;
 uint32_t rebootAt = 0;
 bool otaOK = false;
+bool haDiscoveryPublished = false; // Last MQTT connection's discovery publication status.
 uint8_t mbFrame[260];
 uint16_t mbPos = 0, mbTarget = 0;
 uint32_t mbLastByte = 0;
@@ -328,6 +329,48 @@ void onMqttMessage(char *topic, byte *data, unsigned int n) {
   }
 }
 
+// HA MQTT Discovery: four switch entities grouped into one physical device.
+// Retained configs allow automatic discovery even after Home Assistant restarts.
+// E-fuse MAC provides an ID independent of which interface carries MQTT.
+String haDeviceId() {
+  const uint64_t chipId = ESP.getEfuseMac();
+  char hex[17];
+  snprintf(hex, sizeof(hex), "%08X%08X",
+           (unsigned int)(uint32_t)(chipId >> 32),
+           (unsigned int)(uint32_t)chipId);
+  return "esp32c3_relay_" + String(hex);
+}
+
+bool publishHaDiscovery() {
+  if (!mqtt.connected()) return false;
+  const String devId = haDeviceId();
+  bool allPublished = true;
+  for (int ch = 0; ch < 4; ++ch) {
+    const String entityId = devId + "_relay" + String(ch + 1);
+    const String cfgTopic = "homeassistant/switch/" + entityId + "/config";
+    String config;
+    config.reserve(520);
+    config = "{\"name\":\"Relay " + String(ch + 1) + "\"";
+    config += ",\"unique_id\":\"" + entityId + "\"";
+    config += ",\"command_topic\":\"" + topicSet(ch) + "\"";
+    config += ",\"state_topic\":\"" + topicState(ch) + "\"";
+    config += ",\"availability_topic\":\"" + topicStatus() + "\"";
+    config += ",\"payload_on\":\"ON\",\"payload_off\":\"OFF\"";
+    config += ",\"device\":{\"identifiers\":[\"" + devId + "\"]";
+    config += ",\"name\":\"ESP32-C3 Ethernet Relay\"";
+    config += ",\"manufacturer\":\"DIY\"";
+    config += ",\"model\":\"ESP32-C3 SuperMini + W5500\"";
+    config += ",\"sw_version\":\"1.4.4-dev\"}}";
+    const bool ok = mqtt.publish(cfgTopic.c_str(), config.c_str(), true);
+    if (!ok) {
+      allPublished = false;
+      Serial.printf("HA Discovery relay %d FAILED: payload %u bytes; MQTT buffer may be too small\n",
+                    ch + 1, (unsigned int)config.length());
+    }
+  }
+  return allPublished;
+}
+
 void connectMqtt() {
   if (!mqttEnabled || mqttHost.isEmpty() || currentRoute == 0 || mqtt.connected()) return;
   mqtt.setServer(mqttHost.c_str(), mqttPort);
@@ -338,6 +381,7 @@ void connectMqtt() {
   bool ok = mqtt.connect(id.c_str(), user, pass, status.c_str(), 0, true, "offline");
   if (!ok) { Serial.printf("MQTT connection failed: %d\n", mqtt.state()); return; }
   mqtt.publish(status.c_str(), "online", true);
+  haDiscoveryPublished = false;
   String ipTopic = mqttBase + "/ip";
   String ip = currentRoute == 1 ? ETH.localIP().toString() : WiFi.localIP().toString();
   mqtt.publish(ipTopic.c_str(), ip.c_str(), true);
@@ -345,12 +389,15 @@ void connectMqtt() {
     String t = topicSet(i); mqtt.subscribe(t.c_str());
     t = topicState(i); mqtt.publish(t.c_str(), relayState[i] ? "ON" : "OFF", true);
   }
-  Serial.println("MQTT connected");
+  haDiscoveryPublished = publishHaDiscovery();
+  Serial.printf("MQTT connected; Home Assistant discovery: %s\n",
+                haDiscoveryPublished ? "4 switches published" : "ERROR");
 }
 
 void serviceMqtt() {
   if (!mqttEnabled || currentRoute == 0) return;
   if (mqtt.connected()) { mqtt.loop(); return; }
+  haDiscoveryPublished = false;
   if ((uint32_t)(millis() - mqttLastTry) >= 10000) {
     mqttLastTry = millis(); connectMqtt();
   }
@@ -598,7 +645,7 @@ const char INDEX_HTML[] PROGMEM =
   "<div class=\"net\" id=\"net\">Соединение...</div>\n"
   "<div id=\"relays\"></div>\n"
   "<div class=\"links\"><a href=\"/wifi\">Настройки Wi-Fi</a><a href=\"/mqtt\">Настройки MQTT</a><a href=\"/watchdog\">Watchdog</a><a href=\"/update\">Обновление .bin</a></div>\n"
-  "<div class=\"version\">Firmware v1.4.3-dev · Wi-Fi TX 8.5 dBm · Modbus TCP :502</div>\n"
+  "<div class=\"version\">Firmware v1.4.4-dev · HA MQTT Discovery · Wi-Fi TX 8.5 dBm</div>\n"
   "<script>\n"
   "const area=document.getElementById('relays');\n"
   "for(let i=0;i<4;i++){\n"
@@ -640,6 +687,7 @@ void handleState() {
                                     ? (float)(int)WiFi.getTxPower() / 4.0f : 0.0f, 1);
   json += ",\"mqtt_enabled\":"; json += mqttEnabled ? "true" : "false";
   json += ",\"mqtt_connected\":"; json += mqtt.connected() ? "true" : "false";
+  json += ",\"ha_discovery_published\":"; json += haDiscoveryPublished ? "true" : "false";
   json += ",\"watchdogs\":[";
   for (int i=0;i<4;++i) {
     if (i) json += ",";
@@ -917,7 +965,7 @@ void handleUpdatePage() {
   const char* page =
     "<!doctype html><html lang='ru'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'></head>"
     "<body style='background:#111827;color:white;font:16px Arial;max-width:520px;margin:40px auto;padding:20px'>"
-    "<h2>Web OTA · v1.4.3-dev</h2><form method='POST' action='/update' enctype='multipart/form-data'>"
+    "<h2>Web OTA · v1.4.4-dev</h2><form method='POST' action='/update' enctype='multipart/form-data'>"
     "<input type='file' name='firmware' accept='.bin' required><p><button type='submit'>Загрузить .bin</button></p>"
     "</form><p>Не отключайте питание во время обновления.</p><a style='color:#93c5fd' href='/'>Назад</a></body></html>";
   web.send(200,"text/html; charset=utf-8",page);
@@ -963,12 +1011,12 @@ void setup() {
   }
   Serial.begin(115200);
   delay(500);
-  Serial.println("\nESP32-C3 Ethernet Relay v1.4.3-dev (WiFi TX 8.5 dBm / WiFi LED GPIO8)");
+  Serial.println("\nESP32-C3 Ethernet Relay v1.4.4-dev (HA MQTT Discovery + WiFi LED)");
   loadSettings();
   loadWatchdogSettings();
   pingQueue = xQueueCreate(12, sizeof(PingEvent));
   mqtt.setCallback(onMqttMessage);
-  mqtt.setBufferSize(512);
+  mqtt.setBufferSize(1024); // Discovery JSON + MQTT header/topic.
   mqtt.setKeepAlive(20);
   mqtt.setSocketTimeout(3);
   mqtt.setServer(mqttHost.c_str(),mqttPort);
