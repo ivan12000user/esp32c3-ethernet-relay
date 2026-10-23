@@ -15,6 +15,7 @@
 | Relay IN2 (via 1 kΩ) | 1 |
 | Relay IN3 (via 1 kΩ) | 3 |
 | Relay IN4 (via 1 kΩ) | 10 |
+| Built-in blue status LED (active LOW; no wire) | 8 |
 
 Relay jumpers: **H** (active HIGH). Board relay supply: **12 V**. ESP32-C3 and W5500 boards: **5 V** to their 5 V input, using a suitable 12→5 V DC/DC. Common low-voltage ground. Relay indicators show *commanded GPIO states*, not feedback from contacts.
 
@@ -28,26 +29,34 @@ Relay jumpers: **H** (active HIGH). Board relay supply: **12 V**. ESP32-C3 and W
 
 See [wiring](docs/wiring.md), [Modbus map](docs/modbus-registers.md), [MQTT topics](docs/mqtt-topics.md).
 
-The source in Git is a **credential-sanitized copy** of the working v1.3.0 sketch. The deployed firmware was tested on the actual hardware; this repository version additionally requires a local secrets header, and has **not yet been independently flashed**.
+The `main` branch contains the v1.3.0 reference. The `feature/ping-watchdog` branch now has **v1.4.4-dev** with independent Ping Watchdog and **Wi-Fi TX capped at 8.5 dBm**. Its Ping Watchdog v1.4.0 predecessor was bench-tested; **v1.4.4-dev still needs hardware validation**. There is no `secrets.h` dependency in the development sketch.
+
+## Wi-Fi status LED (GPIO8)
+
+Typical ESP32-C3 SuperMini boards have a blue **active-low** LED on GPIO8. On `feature/ping-watchdog` v1.4.4-dev it is OFF with Wi-Fi disabled or Ethernet backup idle; 250ms blink while STA is connecting or disconnected; ON steadily after STA has an IP address; and double-flashes at 2s intervals while the local AP is running. LED handling is nonblocking. This does not indicate the separate W5500 Ethernet link status. GPIO8 is a boot strapping pin: do not add external wiring or pull-downs.
+
+## Home Assistant (MQTT)
+
+Starting in **v1.4.4-dev**, four relay entities are auto-discovered through retained MQTT Discovery messages under `homeassistant/switch/...`. They are grouped as one device named **ESP32-C3 Ethernet Relay**. Requires enabled MQTT Discovery and the **same MQTT broker** for both Home Assistant and the relay. See [MQTT topics and Discovery](docs/mqtt-topics.md). MQTT relay toggles are intentionally refused while the relevant channel's Ping Watchdog is armed.
 
 ## Build / install
 
 1. In Arduino IDE install **esp32 by Espressif Systems** (3.x) and **PubSubClient** (Nick O'Leary).
-2. Copy `firmware/ESP32C3_Ethernet_Relay/secrets.example.h` to `firmware/ESP32C3_Ethernet_Relay/secrets.h` and enter strong unique passwords. **Do not commit `secrets.h`.**
+2. No `secrets.h` is required for **v1.4.2-dev**. The Web UI has **no authentication** by user request. Default AP password is `12357895`, which is **publicly visible in the source code**. On the first boot of v1.4.2-dev, an older stored AP password is **replaced once** by `12357895`; any later manual changes in `/wifi` will persist.
 3. Open `firmware/ESP32C3_Ethernet_Relay/ESP32C3_Ethernet_Relay.ino`.
 4. Board: ESP32C3 Dev Module. Flash: 4 MB. USB CDC On Boot: Enabled. Partition scheme: **Minimal SPIFFS (1.9MB APP with OTA/128KB SPIFFS)**.
-5. Build and flash via USB initially. Subsequent **application .ino.bin** updates can be uploaded via `/update` using the Web credentials. Do **not** upload merged/bootloader/partition images through Web OTA.
+5. Build and flash via USB initially. Web OTA at `/update` accepts **application `.ino.bin`** files (not merged/bootloader/partition images). **Warning: OTA is not password-protected in v1.4.2-dev; anyone with network access to TCP/80 can upload firmware.** Restrict TCP/80 to trusted hosts or use USB instead.
 
 ### Important security and operational limitations
 
-- The repository is currently **public**. No live passwords, Wi-Fi credentials, broker credentials, tokens, or API keys belong in commits.
-- The built-in HTTP + MQTT 1883 + Modbus TCP are unencrypted. Keep network access limited to a trusted LAN or VPN. Modbus write and Web relay endpoints in v1.3.0 do not implement per-client authorization.
+- The repository is **public**. The requested default AP password `12357895` appears in the public sketch and **must not be considered a secret**. Change it in Web settings for a deployment; avoid AP mode when not needed. Never commit saved Wi-Fi STA/MQTT credentials.
+- **No Web login**: Web relay/settings/firmware upload are accessible to any host permitted to connect to port **80**. Modbus TCP writes on **502** have no authentication. MQTT on **1883** is unencrypted unless separately tunneled. Use firewall/VLAN/VPN isolation and never forward TCP 80/502 from the public Internet.
 - Avoid controlling critical / life-safety loads. Test power loss, reboot, network outages, and relay startup transitions with loads disconnected first.
-- Existing devices running v1.3.0 with previously hardcoded demo Web password should have that credential rotated before exposure to less-trusted networks.
+- v1.4.2-dev removes Web username/password entirely, by user request; this is a **security downgrade** from password-protected management/OTA and is suitable only for isolated trusted test networks.
 
 ## Development
 
-Next planned branch: `feature/ping-watchdog`.
+Active experimental branch: `feature/ping-watchdog` (PR #2).
 
 Design: up to four **independent Ping Watchdogs**, one per relay, each with its own IP, ping interval, failure threshold, power-off pulse time, boot grace period, lockout/cooldown, and event counters. Watchdog is **disabled by default** and must be explicitly armed. On total network outage do not power-cycle all downstream devices.
 

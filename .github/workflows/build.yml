@@ -1,0 +1,37 @@
+name: Compile and test ESP32-C3 firmware
+
+on:
+  push:
+    branches: [main, feature/ping-watchdog]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  watchdog-core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile state machine unit tests
+        run: |
+          g++ -std=c++11 -Wall -Wextra -Werror tests/watchdog_core_test.cpp -o /tmp/watchdog-tests
+          /tmp/watchdog-tests
+
+  arduino-esp32:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-arduino-cli@v2
+      - name: Install Espressif Arduino core and dependencies
+        run: |
+          arduino-cli core update-index --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core install esp32:esp32@3.3.3 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli lib install "PubSubClient@2.8"
+      - name: Compile for ESP32-C3
+        run: |
+          arduino-cli compile \
+            --fqbn esp32:esp32:esp32c3 \
+            --warnings all \
+            firmware/ESP32C3_Ethernet_Relay
