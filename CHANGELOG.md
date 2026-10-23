@@ -9,6 +9,14 @@
 - Field-tested Ethernet, STA, Web, FC01, FC05 relay actuation, MQTT commands/states
 - Repository copy externalizes Web/AP passwords into untracked `secrets.h` (small intentional build configuration change)
 
+## v1.4.2-dev (2026-10-23, unreleased)
+
+- Remove `secrets.h` dependency. No Web password and no HTTP Basic authentication on Web settings or Web OTA.
+- AP fallback password set to `12357895` (can be overridden by earlier NVS config or changed in `/wifi`).
+- **Security warning:** this is a public repository; AP default is public, all HTTP endpoints including OTA are **unauthenticated**; isolate TCP/80 and TCP/502 from other networks.
+- Limit Wi-Fi TX to 8.5 dBm and preserve existing relay, watchdog, MQTT and Modbus functionality.
+- Arduino compilation / physical runtime checks pending.
+
 ## v1.4.1-dev (2026-10-23, unreleased)
 
 - Limit maximum Wi-Fi transmit power to **8.5 dBm** for both STA and AP.
