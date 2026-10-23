@@ -33,7 +33,7 @@ The `main` branch contains the v1.3.0 reference. The `feature/ping-watchdog` bra
 ## Build / install
 
 1. In Arduino IDE install **esp32 by Espressif Systems** (3.x) and **PubSubClient** (Nick O'Leary).
-2. No `secrets.h` is required for **v1.4.2-dev**. The Web UI has **no authentication** by user request. Default AP password is `12357895`, which is **publicly visible in the source code**. If an older AP password was stored in NVS, it takes precedence: change it at `/wifi`.
+2. No `secrets.h` is required for **v1.4.2-dev**. The Web UI has **no authentication** by user request. Default AP password is `12357895`, which is **publicly visible in the source code**. On the first boot of v1.4.2-dev, an older stored AP password is **replaced once** by `12357895`; any later manual changes in `/wifi` will persist.
 3. Open `firmware/ESP32C3_Ethernet_Relay/ESP32C3_Ethernet_Relay.ino`.
 4. Board: ESP32C3 Dev Module. Flash: 4 MB. USB CDC On Boot: Enabled. Partition scheme: **Minimal SPIFFS (1.9MB APP with OTA/128KB SPIFFS)**.
 5. Build and flash via USB initially. Web OTA at `/update` accepts **application `.ino.bin`** files (not merged/bootloader/partition images). **Warning: OTA is not password-protected in v1.4.2-dev; anyone with network access to TCP/80 can upload firmware.** Restrict TCP/80 to trusted hosts or use USB instead.
