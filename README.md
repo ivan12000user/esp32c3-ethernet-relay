@@ -15,6 +15,7 @@
 | Relay IN2 (via 1 kΩ) | 1 |
 | Relay IN3 (via 1 kΩ) | 3 |
 | Relay IN4 (via 1 kΩ) | 10 |
+| Built-in blue status LED (active LOW; no wire) | 8 |
 
 Relay jumpers: **H** (active HIGH). Board relay supply: **12 V**. ESP32-C3 and W5500 boards: **5 V** to their 5 V input, using a suitable 12→5 V DC/DC. Common low-voltage ground. Relay indicators show *commanded GPIO states*, not feedback from contacts.
 
@@ -28,7 +29,11 @@ Relay jumpers: **H** (active HIGH). Board relay supply: **12 V**. ESP32-C3 and W
 
 See [wiring](docs/wiring.md), [Modbus map](docs/modbus-registers.md), [MQTT topics](docs/mqtt-topics.md).
 
-The `main` branch contains the v1.3.0 reference. The `feature/ping-watchdog` branch now has **v1.4.2-dev** with independent Ping Watchdog and **Wi-Fi TX capped at 8.5 dBm**. Its Ping Watchdog v1.4.0 predecessor was bench-tested; **v1.4.2-dev still needs hardware validation**. There is no `secrets.h` dependency in the development sketch.
+The `main` branch contains the v1.3.0 reference. The `feature/ping-watchdog` branch now has **v1.4.3-dev** with independent Ping Watchdog and **Wi-Fi TX capped at 8.5 dBm**. Its Ping Watchdog v1.4.0 predecessor was bench-tested; **v1.4.3-dev still needs hardware validation**. There is no `secrets.h` dependency in the development sketch.
+
+## Wi-Fi status LED (GPIO8)
+
+Typical ESP32-C3 SuperMini boards have a blue **active-low** LED on GPIO8. On `feature/ping-watchdog` v1.4.3-dev it is OFF with Wi-Fi disabled or Ethernet backup idle; 250ms blink while STA is connecting or disconnected; ON steadily after STA has an IP address; and double-flashes at 2s intervals while the local AP is running. LED handling is nonblocking. This does not indicate the separate W5500 Ethernet link status. GPIO8 is a boot strapping pin: do not add external wiring or pull-downs.
 
 ## Build / install
 
