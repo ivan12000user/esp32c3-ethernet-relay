@@ -29,11 +29,15 @@ Relay jumpers: **H** (active HIGH). Board relay supply: **12 V**. ESP32-C3 and W
 
 See [wiring](docs/wiring.md), [Modbus map](docs/modbus-registers.md), [MQTT topics](docs/mqtt-topics.md).
 
-The `main` branch contains the v1.3.0 reference. The `feature/ping-watchdog` branch now has **v1.4.3-dev** with independent Ping Watchdog and **Wi-Fi TX capped at 8.5 dBm**. Its Ping Watchdog v1.4.0 predecessor was bench-tested; **v1.4.3-dev still needs hardware validation**. There is no `secrets.h` dependency in the development sketch.
+The `main` branch contains the v1.3.0 reference. The `feature/ping-watchdog` branch now has **v1.4.4-dev** with independent Ping Watchdog and **Wi-Fi TX capped at 8.5 dBm**. Its Ping Watchdog v1.4.0 predecessor was bench-tested; **v1.4.4-dev still needs hardware validation**. There is no `secrets.h` dependency in the development sketch.
 
 ## Wi-Fi status LED (GPIO8)
 
-Typical ESP32-C3 SuperMini boards have a blue **active-low** LED on GPIO8. On `feature/ping-watchdog` v1.4.3-dev it is OFF with Wi-Fi disabled or Ethernet backup idle; 250ms blink while STA is connecting or disconnected; ON steadily after STA has an IP address; and double-flashes at 2s intervals while the local AP is running. LED handling is nonblocking. This does not indicate the separate W5500 Ethernet link status. GPIO8 is a boot strapping pin: do not add external wiring or pull-downs.
+Typical ESP32-C3 SuperMini boards have a blue **active-low** LED on GPIO8. On `feature/ping-watchdog` v1.4.4-dev it is OFF with Wi-Fi disabled or Ethernet backup idle; 250ms blink while STA is connecting or disconnected; ON steadily after STA has an IP address; and double-flashes at 2s intervals while the local AP is running. LED handling is nonblocking. This does not indicate the separate W5500 Ethernet link status. GPIO8 is a boot strapping pin: do not add external wiring or pull-downs.
+
+## Home Assistant (MQTT)
+
+Starting in **v1.4.4-dev**, four relay entities are auto-discovered through retained MQTT Discovery messages under `homeassistant/switch/...`. They are grouped as one device named **ESP32-C3 Ethernet Relay**. Requires enabled MQTT Discovery and the **same MQTT broker** for both Home Assistant and the relay. See [MQTT topics and Discovery](docs/mqtt-topics.md). MQTT relay toggles are intentionally refused while the relevant channel's Ping Watchdog is armed.
 
 ## Build / install
 
