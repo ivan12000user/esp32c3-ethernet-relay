@@ -9,6 +9,14 @@
 - Field-tested Ethernet, STA, Web, FC01, FC05 relay actuation, MQTT commands/states
 - Repository copy externalizes Web/AP passwords into untracked `secrets.h` (small intentional build configuration change)
 
+## v1.4.3-dev (2026-10-23, unreleased)
+
+- Blue ESP32-C3 SuperMini on-board LED at GPIO8 (active-low) shows Wi-Fi status without blocking the main loop.
+- STA connected (IP acquired): steady ON. STA connecting/disconnected: blink 250 ms on / 250 ms off.
+- AP ready: double short flash every 2 seconds. AP startup: blink. Wi-Fi OFF or idle backup with functioning Ethernet: OFF.
+- No additional wiring, relay GPIO mapping unchanged. GPIO8 is a strapping pin, so do not attach external loads.
+- Keep previous Wi-Fi TX cap 8.5 dBm, Web/MQTT/Modbus/Watchdog settings. Physical LED hardware validation pending.
+
 ## v1.4.2-dev (2026-10-23, unreleased)
 
 - Remove `secrets.h` dependency. No Web password and no HTTP Basic authentication on Web settings or Web OTA.
