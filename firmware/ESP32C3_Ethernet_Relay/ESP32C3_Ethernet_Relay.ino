@@ -16,7 +16,7 @@
 #include "freertos/queue.h"
 
 // ESP32-C3 SuperMini / W5500 / 4 relays, Arduino-ESP32 3.x
-// v1.4.2-dev | W5500 always enabled. WiFi: OFF / BACKUP / PARALLEL / AP
+// v1.4.3-dev | W5500 always enabled. WiFi: OFF / BACKUP / PARALLEL / AP
 // Limit transmitter power to 8.5 dBm (STA and AP). Does not change Ethernet.
 static const wifi_power_t WIFI_TX_POWER = WIFI_POWER_8_5dBm;
 #define ETH_CS 7
@@ -26,6 +26,10 @@ static const wifi_power_t WIFI_TX_POWER = WIFI_POWER_8_5dBm;
 #define ETH_MISO 5
 #define ETH_MOSI 6
 
+// Standard ESP32-C3 SuperMini blue on-board LED: GPIO8, active LOW.
+// GPIO8 is a boot strapping pin; leave external circuitry disconnected.
+const uint8_t WIFI_LED_PIN = 8;
+bool wifiLedIsOn = false;
 const uint8_t relayPins[4] = {0, 1, 3, 10};
 bool relayState[4] = {false, false, false, false};
 // No Web password. Restrict access to HTTP:80 and Modbus:502 at network level.
@@ -352,6 +356,31 @@ void serviceMqtt() {
   }
 }
 
+// Non-blocking Wi-Fi status LED, independent of W5500, MQTT and relays.
+// STA OK: solid; connecting/lost: 250 ms ON / 250 ms OFF.
+// AP: double flash every 2s; Wi-Fi OFF/standby backup: LED OFF.
+void serviceWifiLed() {
+  const uint32_t now = millis();
+  bool ledOn = false;
+
+  if (wifiMode == 3) {
+    if (apReady) {
+      const uint32_t phase = now % 2000UL;
+      ledOn = (phase < 100UL) || (phase >= 250UL && phase < 350UL);
+    } else {
+      ledOn = ((now / 250UL) % 2UL) == 0;
+    }
+  } else if (wifiMode == 2 || (wifiMode == 1 && !ethReady)) {
+    if (staReady) ledOn = true;
+    else ledOn = ((now / 250UL) % 2UL) == 0;
+  }
+
+  if (ledOn != wifiLedIsOn) {
+    wifiLedIsOn = ledOn;
+    digitalWrite(WIFI_LED_PIN, ledOn ? LOW : HIGH);
+  }
+}
+
 void applyWifiTxPower(const char* role) {
   // Arduino-ESP32 requires the STA/AP interface to have been started first.
   const bool ok = WiFi.setTxPower(WIFI_TX_POWER);
@@ -569,7 +598,7 @@ const char INDEX_HTML[] PROGMEM =
   "<div class=\"net\" id=\"net\">Соединение...</div>\n"
   "<div id=\"relays\"></div>\n"
   "<div class=\"links\"><a href=\"/wifi\">Настройки Wi-Fi</a><a href=\"/mqtt\">Настройки MQTT</a><a href=\"/watchdog\">Watchdog</a><a href=\"/update\">Обновление .bin</a></div>\n"
-  "<div class=\"version\">Firmware v1.4.2-dev · Wi-Fi TX 8.5 dBm · Modbus TCP :502</div>\n"
+  "<div class=\"version\">Firmware v1.4.3-dev · Wi-Fi TX 8.5 dBm · Modbus TCP :502</div>\n"
   "<script>\n"
   "const area=document.getElementById('relays');\n"
   "for(let i=0;i<4;i++){\n"
@@ -888,7 +917,7 @@ void handleUpdatePage() {
   const char* page =
     "<!doctype html><html lang='ru'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'></head>"
     "<body style='background:#111827;color:white;font:16px Arial;max-width:520px;margin:40px auto;padding:20px'>"
-    "<h2>Web OTA · v1.4.2-dev</h2><form method='POST' action='/update' enctype='multipart/form-data'>"
+    "<h2>Web OTA · v1.4.3-dev</h2><form method='POST' action='/update' enctype='multipart/form-data'>"
     "<input type='file' name='firmware' accept='.bin' required><p><button type='submit'>Загрузить .bin</button></p>"
     "</form><p>Не отключайте питание во время обновления.</p><a style='color:#93c5fd' href='/'>Назад</a></body></html>";
   web.send(200,"text/html; charset=utf-8",page);
@@ -922,6 +951,10 @@ void handleUpdateResult() {
 }
 
 void setup() {
+  // Turn built-in active-LOW LED OFF before configuring output.
+  // Never connect another load to GPIO8: it is a boot strapping pin.
+  digitalWrite(WIFI_LED_PIN, HIGH);
+  pinMode(WIFI_LED_PIN, OUTPUT);
   // HW relay board uses HIGH trigger; no relay should energize on startup.
   for (int i=0;i<4;i++) {
     digitalWrite(relayPins[i],LOW);
@@ -930,7 +963,7 @@ void setup() {
   }
   Serial.begin(115200);
   delay(500);
-  Serial.println("\nESP32-C3 Ethernet Relay v1.4.2-dev (WiFi TX 8.5 dBm / Web no password)");
+  Serial.println("\nESP32-C3 Ethernet Relay v1.4.3-dev (WiFi TX 8.5 dBm / WiFi LED GPIO8)");
   loadSettings();
   loadWatchdogSettings();
   pingQueue = xQueueCreate(12, sizeof(PingEvent));
@@ -962,6 +995,7 @@ void setup() {
 void loop() {
   if (rebootAt && (int32_t)(millis()-rebootAt)>=0) ESP.restart();
   serviceWifi();
+  serviceWifiLed();
   chooseRoute();
   bool anyNetwork=ethReady || staReady || apReady;
   if (anyNetwork && !servicesStarted) {
