@@ -114,6 +114,18 @@ void loadSettings() {
   apSsid = prefs.getString("ap_ssid", "ESP32C3-Relay");
   apPassword = prefs.getString("ap_pass", "12357895");
   prefs.end();
+
+  // One-time migration: use the newly requested AP password, including when
+  // an old firmware stored another default in NVS. Later /wifi changes persist.
+  prefs.begin("relay-wifi", false);
+  if (!prefs.getBool("ap_v142", false)) {
+    apPassword = "12357895";
+    prefs.putString("ap_pass", apPassword);
+    prefs.putBool("ap_v142", true);
+    Serial.println("AP password migrated to v1.4.2 setting");
+  }
+  prefs.end();
+
   if (wifiMode > 3) wifiMode = 0;
   if (apSsid.isEmpty()) apSsid = "ESP32C3-Relay";
   if (apPassword.length() < 8) apPassword = "12357895";
