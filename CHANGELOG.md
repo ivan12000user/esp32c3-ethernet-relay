@@ -9,6 +9,14 @@
 - Field-tested Ethernet, STA, Web, FC01, FC05 relay actuation, MQTT commands/states
 - Repository copy externalizes Web/AP passwords into untracked `secrets.h` (small intentional build configuration change)
 
+## v1.4.4-dev (2026-10-23, unreleased)
+
+- Add retained Home Assistant MQTT Discovery for four switch entities, grouped as a single ESP32-C3 Ethernet Relay device.
+- Stable eFuse-MAC-derived unique IDs across Wi-Fi/Ethernet interface changes.
+- Reuse original retained state topics, command topics and online/offline last-will availability.
+- Increase PubSubClient buffer to 1024 bytes and expose `ha_discovery_published` in Web API.
+- This requires Home Assistant and the relay to connect to the **same MQTT broker**; no hardware test yet.
+
 ## v1.4.3-dev (2026-10-23, unreleased)
 
 - Blue ESP32-C3 SuperMini on-board LED at GPIO8 (active-low) shows Wi-Fi status without blocking the main loop.
