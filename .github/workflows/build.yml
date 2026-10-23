@@ -29,9 +29,6 @@ jobs:
           arduino-cli core update-index --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
           arduino-cli core install esp32:esp32@3.3.3 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
           arduino-cli lib install "PubSubClient@2.8"
-      - name: Supply nonproduction CI-only test credentials
-        run: |
-          cp firmware/ESP32C3_Ethernet_Relay/secrets.example.h firmware/ESP32C3_Ethernet_Relay/secrets.h
       - name: Compile for ESP32-C3
         run: |
           arduino-cli compile \
