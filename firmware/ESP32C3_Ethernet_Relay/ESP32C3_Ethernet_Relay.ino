@@ -660,7 +660,7 @@ void handleWifiPage() {
   page += "<h3>Собственная точка доступа (AP)</h3>";
   page += "<label>SSID AP<input type='text' name='apssid' maxlength='32' value='" + htmlEscape(apSsid) + "'></label>";
   page += "<label>Пароль AP (8–63 символа; пусто — оставить текущий)<input type='password' name='appass' maxlength='63' autocomplete='new-password'></label>";
-  page += "<p><small>Пароль AP по умолчанию: 12357895. Ранее сохранённый пароль AP имеет приоритет. Адрес AP: 192.168.4.1.</small></p>";
+  page += "<p><small>Пароль AP хранится в настройках устройства (если пароль уже задан, он сохраняется после обновления). Адрес AP: 192.168.4.1.</small></p>";
   page += "<button type='submit'>Сохранить и перезагрузить</button></form><p><a href='/'>На главную</a></p></body></html>";
   web.send(200, "text/html; charset=utf-8", page);
 }
